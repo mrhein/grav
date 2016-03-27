@@ -5,7 +5,6 @@ use Closure;
 use Exception;
 use FilesystemIterator;
 use Grav\Common\Config\Config;
-use Grav\Common\Grav;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use RegexIterator;
@@ -24,6 +23,8 @@ define('JS_ASSET', false);
  */
 class Assets
 {
+    use GravTrait;
+
     /** @const Regex to match CSS and JavaScript files */
     const DEFAULT_REGEX = '/.\.(css|js)$/i';
 
@@ -166,7 +167,7 @@ class Assets
 
         // Set timestamp
         if (isset($config['enable_asset_timestamp']) && $config['enable_asset_timestamp'] === true) {
-            $this->timestamp = '?' . Grav::instance()['cache']->getKey();
+            $this->timestamp = '?' . self::getGrav()['cache']->getKey();
         }
 
         return $this;
@@ -177,14 +178,13 @@ class Assets
      */
     public function init()
     {
-        $grav = Grav::instance();
         /** @var Config $config */
-        $config = $grav['config'];
-        $base_url = $grav['base_url'];
+        $config = self::getGrav()['config'];
+        $base_url = self::getGrav()['base_url'];
         $asset_config = (array)$config->get('system.assets');
 
         /** @var UniformResourceLocator $locator */
-        $locator = $grav['locator'];
+        $locator = self::$grav['locator'];
         $this->assets_dir = $locator->findResource('asset://') . DS;
         $this->assets_url = $locator->findResource('asset://', false);
 
@@ -488,18 +488,19 @@ class Assets
      * Build the CSS link tags.
      *
      * @param  string $group name of the group
+     * @param  boolean $inline define if it output as inline element
      * @param  array  $attributes
      *
      * @return string
      */
-    public function css($group = 'head', $attributes = [])
+    public function css($group = 'head', $inline = false, $attributes = [])
     {
         if (!$this->css && !$this->inline_css) {
             return null;
         }
 
         // Sort array by priorities (larger priority first)
-        if (Grav::instance()) {
+        if (self::getGrav()) {
             uasort($this->css, function ($a, $b) {
                 if ($a['priority'] == $b['priority']) {
                     return $b['order'] - $a['order'];
@@ -525,9 +526,13 @@ class Assets
         $inline_css = '';
 
         if ($this->css_pipeline) {
-            $pipeline_result = $this->pipelineCss($group);
+            $pipeline_result = $this->pipelineCss($group, $inline);
             if ($pipeline_result) {
-                $output .= '<link href="' . $pipeline_result . '"' . $attributes . ' />' . "\n";
+                if ($inline) {
+                    $output .= '<style' . $attributes . '>' . $pipeline_result . '</style>';
+                } else {
+                    $output .= '<link href="' . $pipeline_result . '"' . $attributes . ' />' . "\n";
+                }
             }
             foreach ($this->css_no_pipeline as $file) {
                 if ($group && $file['group'] == $group) {
@@ -563,11 +568,12 @@ class Assets
      * Build the JavaScript script tags.
      *
      * @param  string $group name of the group
+     * @param  boolean $inline define if it output as inline element
      * @param  array  $attributes
      *
      * @return string
      */
-    public function js($group = 'head', $attributes = [])
+    public function js($group = 'head', $inline = false, $attributes = [])
     {
         if (!$this->js && !$this->inline_js) {
             return null;
@@ -599,9 +605,13 @@ class Assets
         $inline_js = '';
 
         if ($this->js_pipeline) {
-            $pipeline_result = $this->pipelineJs($group);
+            $pipeline_result = $this->pipelineJs($group, $inline);
             if ($pipeline_result) {
-                $output .= '<script src="' . $pipeline_result . '"' . $attributes . ' ></script>' . "\n";
+                if ($inline) {
+                    $output .= '<script async defer'. $attributes . '>' . $pipeline_result . '</script>';
+                } else {
+                    $output .= '<script src="' . $pipeline_result . '"' . $attributes . ' ></script>' . "\n";
+                }
             }
             foreach ($this->js_no_pipeline as $file) {
                 if ($group && $file['group'] == $group) {
@@ -637,10 +647,10 @@ class Assets
      *
      * @return bool|string
      */
-    protected function pipelineCss($group = 'head')
+    protected function pipelineCss($group = 'head', $inline = false)
     {
         /** @var Cache $cache */
-        $cache = Grav::instance()['cache'];
+        $cache = self::getGrav()['cache'];
         $key = '?' . $cache->getKey();
 
         // temporary list of assets to pipeline
@@ -656,6 +666,9 @@ class Assets
 
         // If pipeline exist return it
         if (file_exists($absolute_path)) {
+            if($inline) {
+                return file_get_contents($absolute_path);
+            }
             return $relative_path . $key;
         }
 
@@ -695,6 +708,9 @@ class Assets
         if (strlen(trim($buffer)) > 0) {
             file_put_contents($absolute_path, $buffer);
 
+            if($inline) {
+                return $buffer;
+            }
             return $relative_path . $key;
         } else {
             return false;
@@ -708,10 +724,10 @@ class Assets
      *
      * @return string
      */
-    protected function pipelineJs($group = 'head')
+    protected function pipelineJs($group = 'head', $inline = false)
     {
         /** @var Cache $cache */
-        $cache = Grav::instance()['cache'];
+        $cache = self::getGrav()['cache'];
         $key = '?' . $cache->getKey();
 
         // temporary list of assets to pipeline
@@ -727,6 +743,9 @@ class Assets
 
         // If pipeline exist return it
         if (file_exists($absolute_path)) {
+            if($inline) {
+                return file_get_contents($absolute_path);
+            }
             return $relative_path . $key;
         }
 
@@ -756,6 +775,9 @@ class Assets
         if (strlen(trim($buffer)) > 0) {
             file_put_contents($absolute_path, $buffer);
 
+            if($inline) {
+                return $buffer;
+            }
             return $relative_path . $key;
         } else {
             return false;
@@ -901,7 +923,7 @@ class Assets
 
         // Check if $directory is a stream.
         if (strpos($directory, '://')) {
-            $directory = Grav::instance()['locator']->findResource($directory, null);
+            $directory = self::$grav['locator']->findResource($directory, null);
         }
 
         // Get files
@@ -963,7 +985,7 @@ class Assets
     protected function buildLocalLink($asset)
     {
         try {
-            $asset = Grav::instance()['locator']->findResource($asset, false);
+            $asset = self::getGrav()['locator']->findResource($asset, false);
         } catch (\Exception $e) {
         }
 
